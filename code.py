@@ -32,10 +32,10 @@ import matplotlib.pyplot as plt
 # Resistance et incertitude en ohms ; tau et incertitude en MICROSECONDES.
 # Remplacer les listes [np.nan] * 10 par vos listes de nombres.
 RC = {
-    "R_ohm":    [np.nan] * 10,
-    "dR_ohm":   [np.nan] * 10,
-    "tau_us":   [np.nan] * 10,
-    "dtau_us":  [np.nan] * 10,
+    "R_ohm":    [100, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000] ,
+    "dR_ohm":   [1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+    "tau_us":   [15.66, 55.80, 108, 213, 305, 395, 494.5, 605, 699, 796, 900, 988],
+    "dtau_us":  [0.66, 3.2, 4.4, 10, 12, 17.5, 21, 29, 36, 36, 28],
 }
 RL = {
     "R_ohm":    [np.nan] * 10,
