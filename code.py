@@ -10,10 +10,13 @@ Les mesures personnelles sont vides par defaut. Les donnees de l'exemple
 proviennent de TP_Laura.pdf, pages 13 et 30, et ne sont PAS vos mesures.
 Les simulations sont toujours identifiees et rangees a part.
 
-La regression et ses incertitudes reprennent la methode de l'annexe du
-compte rendu LaTeX prepare dans cette conversation : moindres carres non
-ponderes, puis propagation additive des incertitudes au premier ordre.
-Il ne s'agit ni d'ecarts-types, ni d'intervalles de confiance statistiques.
+La droite centrale est obtenue par moindres carres non ponderes. Pour les
+incertitudes sur la pente et l'ordonnee a l'origine, le graphique ajoute les
+deux droites extremes utilisees dans le TP : la droite la plus pentue et la
+droite la moins pentue, construites a partir des barres d'erreur des premier
+et dernier points. On utilise alors Delta a = (a_max-a_min)/2 et
+Delta b = (b_max-b_min)/2. La propagation additive reste calculee en interne
+comme controle, mais les resultats finaux utilisent les droites extremes.
 """
 from __future__ import annotations
 
@@ -86,6 +89,18 @@ class Ajustement:
     db: float
     r2: float
     residus: np.ndarray
+
+
+@dataclass
+class DroitesExtremes:
+    a_min: float
+    b_min: float
+    a_max: float
+    b_max: float
+    da: float
+    db: float
+    points_min: tuple[tuple[float, float], tuple[float, float]]
+    points_max: tuple[tuple[float, float], tuple[float, float]]
 
 
 def avertir(message: str, journal: list[str]) -> None:
@@ -206,6 +221,68 @@ def regression_additive(x, y, dx, dy) -> Ajustement:
     return Ajustement(a, b, da, db, r2, residus)
 
 
+def droites_extremes(x, y, dx, dy) -> DroitesExtremes:
+    """Construire les deux droites extremes de la methode utilisee dans le TP.
+
+    Les points doivent etre classes par abscisse croissante. Pour une tendance
+    croissante y=f(x) :
+      - pente maximale : premier point en bas-a-droite de sa barre d'erreur et
+        dernier point en haut-a-gauche ;
+      - pente minimale : premier point en haut-a-gauche et dernier point en
+        bas-a-droite.
+
+    Cette construction est celle decrite dans le compte rendu de reference.
+    Elle est surtout pertinente lorsque les premier et dernier points portent
+    bien les contraintes extremes du nuage. Le programme trace les deux
+    droites pour permettre de le verifier visuellement.
+    """
+    x, y, dx, dy = [np.asarray(v, dtype=float) for v in (x, y, dx, dy)]
+    if x.ndim != 1 or not (x.shape == y.shape == dx.shape == dy.shape) or len(x) < 2:
+        raise ValueError("Droites extremes : quatre vecteurs de meme taille sont attendus.")
+    if np.any(dx < 0) or np.any(dy < 0):
+        raise ValueError("Droites extremes : les incertitudes doivent etre positives.")
+
+    # Premier et dernier points apres tri par R dans preparer_donnees().
+    x1, y1, dx1, dy1 = x[0], y[0], dx[0], dy[0]
+    x2, y2, dx2, dy2 = x[-1], y[-1], dx[-1], dy[-1]
+
+    # Plus pentue : A bas-droite, B haut-gauche.
+    Amax = (x1 + dx1, y1 - dy1)
+    Bmax = (x2 - dx2, y2 + dy2)
+    denom_max = Bmax[0] - Amax[0]
+    if denom_max <= 0:
+        raise ValueError("Droite extreme max : les intervalles horizontaux des extremites se recouvrent.")
+    a_max_cand = (Bmax[1] - Amax[1]) / denom_max
+    b_maxline = Amax[1] - a_max_cand * Amax[0]
+
+    # Moins pentue : C haut-gauche, D bas-droite.
+    Amin = (x1 - dx1, y1 + dy1)
+    Bmin = (x2 + dx2, y2 - dy2)
+    denom_min = Bmin[0] - Amin[0]
+    if denom_min <= 0:
+        raise ValueError("Droite extreme min : les intervalles horizontaux des extremites se recouvrent.")
+    a_min_cand = (Bmin[1] - Amin[1]) / denom_min
+    b_minline = Amin[1] - a_min_cand * Amin[0]
+
+    # Dans le cas normal a_max_cand > a_min_cand. On garde quand meme une
+    # sortie robuste si les donnees sont inhabituelles, sans perdre les paires
+    # pente/interception correspondant aux deux droites effectivement tracees.
+    lignes = sorted([(a_min_cand, b_minline, (Amin, Bmin)),
+                     (a_max_cand, b_maxline, (Amax, Bmax))], key=lambda z: z[0])
+    a_min, b_assoc_min, pts_min = lignes[0]
+    a_max, b_assoc_max, pts_max = lignes[1]
+    b_min = min(b_assoc_min, b_assoc_max)
+    b_max = max(b_assoc_min, b_assoc_max)
+
+    return DroitesExtremes(
+        a_min=float(a_min), b_min=float(b_min),
+        a_max=float(a_max), b_max=float(b_max),
+        da=float((a_max - a_min) / 2),
+        db=float((b_max - b_min) / 2),
+        points_min=pts_min, points_max=pts_max,
+    )
+
+
 def valeur_incertitude(valeur: float, incertitude: float, unite: str) -> str:
     """Deux chiffres significatifs pour l'incertitude, meme rang pour la valeur."""
     if not np.isfinite(incertitude) or incertitude <= 0:
@@ -264,6 +341,7 @@ def traiter_circuit(donnees: dict, circuit: str, dossier: Path, afficher: bool,
     rc = circuit == "RC"
     y, dy = (tau, dtau) if rc else (1 / tau, dtau / tau**2)
     fit = regression_additive(R, y, dR, dy)
+    extremes = droites_extremes(R, y, dR, dy)
     if np.max(dy) / np.min(dy) > 5:
         avertir(f"{circuit} : incertitudes verticales tres inegales ; justifier l'OLS non pondere.", journal)
     if np.max(dR) > 0.05 * np.ptp(R):
@@ -284,31 +362,60 @@ def traiter_circuit(donnees: dict, circuit: str, dossier: Path, afficher: bool,
     fig, ax = nouvelle_figure(titre, r"Résistance $R$ ($\Omega$)", ylabel)
     ax.errorbar(R, y * facteur, xerr=dR, yerr=dy * facteur,
                 fmt="o", markersize=4, capsize=3, label=etiquette)
-    eq = f"Ajustement affine : y = {fit.a * facteur:.5g} R {fit.b * facteur:+.5g}"
-    ax.plot(R_grille, (fit.a * R_grille + fit.b) * facteur, label=eq)
-    texte = (f"a = {valeur_incertitude(fit.a * facteur, fit.da * facteur, 'us/ohm' if rc else 's^-1/ohm')}\n"
-             f"b = {valeur_incertitude(fit.b * facteur, fit.db * facteur, 'us' if rc else 's^-1')}\n"
+    eq = f"Régression : y = {fit.a * facteur:.5g} R {fit.b * facteur:+.5g}"
+    ax.plot(R_grille, (fit.a * R_grille + fit.b) * facteur, linewidth=2.0, label=eq)
+
+    # Deux droites extremes utilisees pour a_min et a_max.
+    ax.plot(R_grille,
+            (extremes.a_max * R_grille + (extremes.points_max[0][1] - extremes.a_max * extremes.points_max[0][0])) * facteur,
+            linestyle="--", linewidth=1.4,
+            label=f"Plus pentue : a_max = {extremes.a_max * facteur:.5g}")
+    ax.plot(R_grille,
+            (extremes.a_min * R_grille + (extremes.points_min[0][1] - extremes.a_min * extremes.points_min[0][0])) * facteur,
+            linestyle=":", linewidth=1.8,
+            label=f"Moins pentue : a_min = {extremes.a_min * facteur:.5g}")
+
+    # Points A-B et C-D servant a construire les deux droites extremes.
+    pmax = np.asarray(extremes.points_max)
+    pmin = np.asarray(extremes.points_min)
+    ax.plot(pmax[:, 0], pmax[:, 1] * facteur, "x", markersize=7,
+            label="Extrémités utilisées pour a_max")
+    ax.plot(pmin[:, 0], pmin[:, 1] * facteur, "+", markersize=8,
+            label="Extrémités utilisées pour a_min")
+
+    unite_a = 'us/ohm' if rc else 's^-1/ohm'
+    unite_b = 'us' if rc else 's^-1'
+    texte = (f"a = {fit.a * facteur:.6g} {unite_a}\n"
+             f"a_min = {extremes.a_min * facteur:.6g} ; a_max = {extremes.a_max * facteur:.6g}\n"
+             f"Delta a = {extremes.da * facteur:.3g} {unite_a}\n"
+             f"b = {fit.b * facteur:.6g} {unite_b} ; Delta b = {extremes.db * facteur:.3g} {unite_b}\n"
              f"R² = {fit.r2:.6f} ; {len(R)} points")
-    ax.text(0.03, 0.97, texte, transform=ax.transAxes, va="top", fontsize=9)
-    ax.legend(loc="lower right", fontsize=8)
+    ax.text(0.03, 0.97, texte, transform=ax.transAxes, va="top", fontsize=8.2,
+            bbox=dict(boxstyle="round,pad=0.35", facecolor="white", alpha=0.80, edgecolor="0.75"))
+    ax.legend(loc="best", fontsize=7.4)
     enregistrer(fig, dossier, f"{prefixe}_regression", afficher, fichiers, mention)
 
     resultat = {"n": len(R), "a_SI": fit.a, "b_SI": fit.b,
-                "Delta_a_SI": fit.da, "Delta_b_SI": fit.db,
+                "a_min_SI": extremes.a_min, "a_max_SI": extremes.a_max,
+                "b_min_SI": extremes.b_min, "b_max_SI": extremes.b_max,
+                "Delta_a_SI": extremes.da, "Delta_b_SI": extremes.db,
+                "Delta_a_additive_controle_SI": fit.da,
+                "Delta_b_additive_controle_SI": fit.db,
                 "R2": fit.r2 if np.isfinite(fit.r2) else None,
                 "residus_SI": fit.residus.tolist(),
                 "unite_a": "F" if rc else "H^-1", "unite_b": "s" if rc else "s^-1"}
     journal.extend([f"\n{circuit} - {len(R)} mesures", texte,
-                    "Incertitudes : propagation additive, non statistique."])
+                    "Incertitudes finales sur a et b : methode des droites extremes.",
+                    f"Controle propagation additive : Delta a = {fit.da * facteur:.6g}, Delta b = {fit.db * facteur:.6g}."])
     estimation = None
     if fit.a <= 0:
         avertir(f"{circuit} : pente non positive ; parametres physiques non deduits. "
                 "La droite reste tracee pour discuter ce resultat.", journal)
     else:
         grandeur = fit.a if rc else 1 / fit.a
-        dgrandeur = fit.da if rc else fit.da / fit.a**2
+        dgrandeur = extremes.da if rc else extremes.da / fit.a**2
         Rp = fit.b / fit.a
-        dRp = fit.db / abs(fit.a) + abs(fit.b) * fit.da / fit.a**2
+        dRp = extremes.db / abs(fit.a) + abs(fit.b) * extremes.da / fit.a**2
         estimation = (grandeur, dgrandeur)
         resultat.update({"C_F" if rc else "L_H": grandeur,
                          "Delta_C_F" if rc else "Delta_L_H": dgrandeur,
@@ -319,8 +426,9 @@ def traiter_circuit(donnees: dict, circuit: str, dossier: Path, afficher: bool,
         journal.append("R' = " + valeur_incertitude(Rp, dRp, "ohm"))
         if Rp < 0:
             avertir(f"{circuit} : R' centrale negative ; ne pas remplacer par sa valeur absolue.", journal)
-        if fit.da >= fit.a:
-            avertir(f"{circuit} : l'intervalle de la pente atteint zero ; les quotients sont mal determines.", journal)
+        if extremes.da >= abs(fit.a):
+            avertir(f"{circuit} : l'incertitude par droites extremes atteint la valeur de la pente ; "
+                    "les quotients sont mal determines.", journal)
 
     # Calculs directs : toujours en SI, sans arrondis intermediaires.
     masque = R > 0
@@ -580,7 +688,7 @@ def main(exemple_2025: bool | None = None, afficher: bool | None = None,
                "MODE : EXEMPLE 2025, donnees d'un autre groupe" if exemple else "MODE : MESURES PERSONNELLES",
                f"NumPy {np.__version__} ; Matplotlib {matplotlib.__version__}",
                "Calculs en SI ; tau saisi en us, conversion automatique en secondes.",
-               "OLS non pondere ; propagation additive au premier ordre."]
+               "Droite centrale : OLS non pondere ; incertitudes finales : droites extremes."]
     if exemple:
         journal.append("Source : TP_Laura.pdf, Bouchard-Mourier / Torres, pages 13 et 30.")
     print("\n".join(journal))
