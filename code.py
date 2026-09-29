@@ -2,21 +2,7 @@
 """TP1 - Circuits RC et RL : figures et exploitation des mesures.
 
 Dependances : numpy et matplotlib. Python >= 3.10.
-Installation : python -m pip install numpy matplotlib
-Execution   : python courbes_tp1.py
-Test 2025   : python courbes_tp1.py --exemple-2025 --sans-affichage
-
-Les mesures personnelles sont vides par defaut. Les donnees de l'exemple
-proviennent de TP_Laura.pdf, pages 13 et 30, et ne sont PAS vos mesures.
-Les simulations sont toujours identifiees et rangees a part.
-
-La droite centrale est obtenue par moindres carres non ponderes. Pour les
-incertitudes sur la pente et l'ordonnee a l'origine, le graphique ajoute les
-deux droites extremes utilisees dans le TP : la droite la plus pentue et la
-droite la moins pentue, construites a partir des barres d'erreur des premier
-et dernier points. On utilise alors Delta a = (a_max-a_min)/2 et
-Delta b = (b_max-b_min)/2. La propagation additive reste calculee en interne
-comme controle, mais les resultats finaux utilisent les droites extremes.
+Execution   : python tp1physique.py
 """
 from __future__ import annotations
 
@@ -30,26 +16,23 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 
-# %% 1. ZONE A COMPLETER : aucune mesure personnelle n'est inventee.
-# Une colonne = une grandeur ; un meme indice = une meme mesure.
-# Resistance et incertitude en ohms ; tau et incertitude en MICROSECONDES.
-# Remplacer les listes [np.nan] * 10 par vos listes de nombres.
+# %% 1. ZONE A COMPLETER : Mesures personnelles
 RC = {
-    "R_ohm":    [100, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000] ,
+    "R_ohm":    [100, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000],
     "dR_ohm":   [1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
     "tau_us":   [15.66, 55.80, 108, 213, 305, 395, 494.5, 605, 699, 796, 900, 988],
     "dtau_us":  [0.66, 3.2, 4.4, 10, 10, 12, 17.5, 21, 29, 36, 36, 28],
 }
+
+# RL restreint aux 8 premiers points (jusqu'a 6000 ohms) pour supprimer l'effet parasite
 RL = {
-    "R_ohm":    [100, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000],
-    "dR_ohm":   [1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
-    "tau_us":   [770, 190.5, 97.6, 50.6, 33.8, 26.15, 21.45, 18.30, 16.14, 14.8, 13.86, 13.22],
-    "dtau_us":  [32, 7.5, 4.4, 2.4, 1.6, 0.65, 0.65, 0.58, 0.3, 0.4, 0.38, 0.3],
+    "R_ohm":    [100, 500, 1000, 2000, 3000, 4000, 5000, 6000],
+    "dR_ohm":   [1, 5, 10, 20, 30, 40, 50, 60],
+    "tau_us":   [770, 190.5, 97.6, 50.6, 33.8, 26.15, 21.45, 18.30],
+    "dtau_us":  [32, 7.5, 4.4, 2.4, 1.6, 0.65, 0.65, 0.58],
 }
 
 # Valeurs constructeur facultatives : (valeur, incertitude absolue).
-# Laisser None tant qu'elles ne sont pas connues. Ne pas reprendre
-# automatiquement les caracteristiques des composants de l'an dernier.
 C_REFERENCE_UF = (None, None)    # capacite en microfarads
 L_REFERENCE_MH = (None, None)    # inductance en millihenrys
 
@@ -60,25 +43,10 @@ TRACER_COMPLEMENTS = True       # C_app(R), L_app(R), tau_RL(R), residus
 RACINE = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
 DOSSIER_SORTIE = RACINE / "resultats_TP1"
 
-# Illustrations sans dimension, PAS des constantes de temps mesurees.
 TAU_SUR_T_INTEGRATEUR = 10.0     # tau / T >> 1
 TAU_SUR_T_DERIVATEUR = 0.01      # tau / T << 1
 
-# Exports oscilloscope facultatifs. Chaque fichier doit contenir les
-# colonnes temps, CH1, CH2 (l'ordre est configurable). Voir LIRE_MOI.md.
 ACQUISITIONS = []
-# Exemple de configuration A COMPLETER, puis a placer dans la liste :
-# {
-#     "fichier": "mesures/rc_echelon.csv", "nom": "rc_63",
-#     "circuit": "RC", "titre": "Charge du condensateur - acquisition",
-#     "separateur": ";", "lignes_entete": 1, "colonnes": (0, 1, 2),
-#     "unite_temps": "s", "double_axe": False,
-#     "pointage": {"t0_s": None, "tau_s": None,
-#                  "u_initial_V": None, "u_final_V": None},
-# }
-# Pour les cas limites, utiliser par exemple les noms suivants :
-# rc_integrateur_creneau, rc_integrateur_triangle, rc_integrateur_sinus,
-# rl_derivateur_creneau, rl_derivateur_triangle, rl_derivateur_sinus.
 
 # %% 2. DONNEES, AJUSTEMENT ET INCERTITUDES
 @dataclass
@@ -110,11 +78,6 @@ def avertir(message: str, journal: list[str]) -> None:
 
 
 def depuis_encadrements(R_ohm, dR_ohm, tau_min_us, tau_max_us) -> dict:
-    """Option : convertir des encadrements de DUREE en tau et Delta tau.
-
-    Si les bornes sont des dates absolues de curseur, soustraire d'abord
-    l'origine et tenir compte de son incertitude : ce ne sont pas des durees.
-    """
     lo, hi = np.asarray(tau_min_us, float), np.asarray(tau_max_us, float)
     if lo.shape != hi.shape or np.any(hi < lo):
         raise ValueError("Encadrements incoherents : tau_max doit etre >= tau_min.")
@@ -123,13 +86,6 @@ def depuis_encadrements(R_ohm, dR_ohm, tau_min_us, tau_max_us) -> dict:
 
 
 def donnees_2025() -> tuple[dict, dict]:
-    """Transcription des colonnes R, Delta R, tau_moy, Delta tau publiees.
-
-    Source : TP_Laura.pdf, Bouchard-Mourier / Torres, 15 septembre 2025,
-    page 13 (RC, figure 6) et page 30 (RL, figure 16).
-    On conserve les valeurs arrondies de tau_moy du tableau, sans les
-    remplacer par de nouveaux milieux calcules a partir de bornes arrondies.
-    """
     rc = {"R_ohm": [250, 500, 750, 1000, 1250, 1500, 2000, 2500, 3000, 3500],
           "dR_ohm": [5, 10, 15, 20, 25, 30, 40, 50, 60, 70],
           "tau_us": [28.9, 52.6, 80.0, 105, 130, 154, 206, 257, 304, 362],
@@ -140,7 +96,6 @@ def donnees_2025() -> tuple[dict, dict]:
 
 
 def preparer_donnees(donnees: dict, circuit: str, journal: list[str]):
-    """Valider la saisie, ignorer les lignes entierement vides, passer en SI."""
     cles = ("R_ohm", "dR_ohm", "tau_us", "dtau_us")
     colonnes = [np.asarray(donnees[k], dtype=float) for k in cles]
     if any(c.ndim != 1 for c in colonnes):
@@ -180,13 +135,6 @@ def preparer_donnees(donnees: dict, circuit: str, journal: list[str]):
 
 
 def regression_additive(x, y, dx, dy) -> Ajustement:
-    """y = a*x+b : OLS non pondere, ordonnee libre, propagation additive.
-
-    La position centrale est une regression VERTICALE non ponderee.
-    dx intervient dans les incertitudes propagees, pas dans la minimisation.
-    La dispersion residuelle n'est pas ajoutee comme une nouvelle erreur.
-    Un mauvais modele ne se corrige donc pas en gonflant automatiquement da.
-    """
     x, y, dx, dy = [np.asarray(v, dtype=float) for v in (x, y, dx, dy)]
     if x.ndim != 1 or not (x.shape == y.shape == dx.shape == dy.shape) or len(x) < 3:
         raise ValueError("Regression : quatre vecteurs de meme taille, au moins 3 points.")
@@ -200,7 +148,6 @@ def regression_additive(x, y, dx, dy) -> Ajustement:
     Sxx = float(X @ X)
     if Sxx <= 0:
         raise ValueError("Regression impossible : toutes les abscisses sont identiques.")
-    # Centrage et changement d'echelle pour le conditionnement numerique.
     echelle = np.sqrt(Sxx / n)
     A = np.column_stack((X / echelle, np.ones(n)))
     (alpha, beta), _, rang, _ = np.linalg.lstsq(A, Y, rcond=None)
@@ -208,7 +155,6 @@ def regression_additive(x, y, dx, dy) -> Ajustement:
         raise ValueError("Regression : matrice de rang insuffisant.")
     a = float(alpha / echelle)
     b = float(ym + beta - a * xm)
-    # Derivees EXACTES des coefficients OLS par rapport aux donnees.
     da_dy = X / Sxx
     da_dx = (Y - 2 * a * X) / Sxx
     db_dy = 1 / n - xm * da_dy
@@ -222,31 +168,15 @@ def regression_additive(x, y, dx, dy) -> Ajustement:
 
 
 def droites_extremes(x, y, dx, dy) -> DroitesExtremes:
-    """Construire les deux droites extremes de la methode utilisee dans le TP.
-
-    Les points doivent etre classes par abscisse croissante. Pour une tendance
-    croissante y=f(x) :
-      - pente maximale : premier point en bas-a-droite de sa barre d'erreur et
-        dernier point en haut-a-gauche ;
-      - pente minimale : premier point en haut-a-gauche et dernier point en
-        bas-a-droite.
-
-    Cette construction est celle decrite dans le compte rendu de reference.
-    Elle est surtout pertinente lorsque les premier et dernier points portent
-    bien les contraintes extremes du nuage. Le programme trace les deux
-    droites pour permettre de le verifier visuellement.
-    """
     x, y, dx, dy = [np.asarray(v, dtype=float) for v in (x, y, dx, dy)]
     if x.ndim != 1 or not (x.shape == y.shape == dx.shape == dy.shape) or len(x) < 2:
         raise ValueError("Droites extremes : quatre vecteurs de meme taille sont attendus.")
     if np.any(dx < 0) or np.any(dy < 0):
         raise ValueError("Droites extremes : les incertitudes doivent etre positives.")
 
-    # Premier et dernier points apres tri par R dans preparer_donnees().
     x1, y1, dx1, dy1 = x[0], y[0], dx[0], dy[0]
     x2, y2, dx2, dy2 = x[-1], y[-1], dx[-1], dy[-1]
 
-    # Plus pentue : A bas-droite, B haut-gauche.
     Amax = (x1 + dx1, y1 - dy1)
     Bmax = (x2 - dx2, y2 + dy2)
     denom_max = Bmax[0] - Amax[0]
@@ -255,7 +185,6 @@ def droites_extremes(x, y, dx, dy) -> DroitesExtremes:
     a_max_cand = (Bmax[1] - Amax[1]) / denom_max
     b_maxline = Amax[1] - a_max_cand * Amax[0]
 
-    # Moins pentue : C haut-gauche, D bas-droite.
     Amin = (x1 - dx1, y1 + dy1)
     Bmin = (x2 + dx2, y2 - dy2)
     denom_min = Bmin[0] - Amin[0]
@@ -264,9 +193,6 @@ def droites_extremes(x, y, dx, dy) -> DroitesExtremes:
     a_min_cand = (Bmin[1] - Amin[1]) / denom_min
     b_minline = Amin[1] - a_min_cand * Amin[0]
 
-    # Dans le cas normal a_max_cand > a_min_cand. On garde quand meme une
-    # sortie robuste si les donnees sont inhabituelles, sans perdre les paires
-    # pente/interception correspondant aux deux droites effectivement tracees.
     lignes = sorted([(a_min_cand, b_minline, (Amin, Bmin)),
                      (a_max_cand, b_maxline, (Amax, Bmax))], key=lambda z: z[0])
     a_min, b_assoc_min, pts_min = lignes[0]
@@ -284,7 +210,6 @@ def droites_extremes(x, y, dx, dy) -> DroitesExtremes:
 
 
 def valeur_incertitude(valeur: float, incertitude: float, unite: str) -> str:
-    """Deux chiffres significatifs pour l'incertitude, meme rang pour la valeur."""
     if not np.isfinite(incertitude) or incertitude <= 0:
         return f"{valeur:.6g} +/- {incertitude:.3g} {unite}"
     decimales = 1 - int(np.floor(np.log10(incertitude)))
@@ -293,7 +218,7 @@ def valeur_incertitude(valeur: float, incertitude: float, unite: str) -> str:
     return f"({v:.{p}f} +/- {d:.{p}f}) {unite}"
 
 
-# %% 3. FIGURES EXPERIMENTALES : UNE FIGURE PAR GRAPHIQUE
+# %% 3. FIGURES EXPERIMENTALES
 
 def nouvelle_figure(titre: str, xlabel: str, ylabel: str):
     fig, ax = plt.subplots(figsize=(7.4, 4.8), layout="constrained")
@@ -342,6 +267,7 @@ def traiter_circuit(donnees: dict, circuit: str, dossier: Path, afficher: bool,
     y, dy = (tau, dtau) if rc else (1 / tau, dtau / tau**2)
     fit = regression_additive(R, y, dR, dy)
     extremes = droites_extremes(R, y, dR, dy)
+    
     if np.max(dy) / np.min(dy) > 5:
         avertir(f"{circuit} : incertitudes verticales tres inegales ; justifier l'OLS non pondere.", journal)
     if np.max(dR) > 0.05 * np.ptp(R):
@@ -356,44 +282,52 @@ def traiter_circuit(donnees: dict, circuit: str, dossier: Path, afficher: bool,
     mention = "EXEMPLE 2025 - données d'un autre groupe" if exemple else ""
     etiquette = "Données publiées (2025)" if exemple else "Mesures"
     facteur = 1e6 if rc else 1.0
-    ylabel = r"Constante de temps $\tau$ ($\mu$s)" if rc else r"Inverse $1/\tau$ (s$^{-1}$)"
-    titre = "RC : ajustement de $\\tau(R)$" if rc else "RL : ajustement de $1/\\tau(R)$"
+    
+    ylabel = r"Constante de temps $\tau$ ($\mu$s)" if rc else r"Inverse de la constante de temps $1/\tau$ (s$^{-1}$)"
+    titre = r"RC : Évolution de la constante de temps $\tau(R)$" if rc else r"RL : Evolution de l'inverse de la constante de temps $1/\tau(R)$"
+    
     R_grille = np.linspace(R.min(), R.max(), 500)
     fig, ax = nouvelle_figure(titre, r"Résistance $R$ ($\Omega$)", ylabel)
+    
+    # Points expérimentaux
     ax.errorbar(R, y * facteur, xerr=dR, yerr=dy * facteur,
                 fmt="o", markersize=4, capsize=3, label=etiquette)
-    eq = f"Régression : y = {fit.a * facteur:.5g} R {fit.b * facteur:+.5g}"
-    ax.plot(R_grille, (fit.a * R_grille + fit.b) * facteur, linewidth=2.0, label=eq)
 
-    # Deux droites extremes utilisees pour a_min et a_max.
-    ax.plot(R_grille,
-            (extremes.a_max * R_grille + (extremes.points_max[0][1] - extremes.a_max * extremes.points_max[0][0])) * facteur,
-            linestyle="--", linewidth=1.4,
-            label=f"Plus pentue : a_max = {extremes.a_max * facteur:.5g}")
-    ax.plot(R_grille,
-            (extremes.a_min * R_grille + (extremes.points_min[0][1] - extremes.a_min * extremes.points_min[0][0])) * facteur,
-            linestyle=":", linewidth=1.8,
-            label=f"Moins pentue : a_min = {extremes.a_min * facteur:.5g}")
+    # Droite centrale
+    b_val = fit.b * facteur
+    signe_b = "+" if b_val >= 0 else "-"
+    eq_centrale = f"$y(R) = {fit.a * facteur:.5g} R {signe_b} {abs(b_val):.4g}$"
+    ax.plot(R_grille, (fit.a * R_grille + fit.b) * facteur, linewidth=2.0, color="orange", label=eq_centrale)
 
-    # Points A-B et C-D servant a construire les deux droites extremes.
-    pmax = np.asarray(extremes.points_max)
-    pmin = np.asarray(extremes.points_min)
-    ax.plot(pmax[:, 0], pmax[:, 1] * facteur, "x", markersize=7,
-            label="Extrémités utilisées pour a_max")
-    ax.plot(pmin[:, 0], pmin[:, 1] * facteur, "+", markersize=8,
-            label="Extrémités utilisées pour a_min")
+    # Droites extrêmes
+    b_max_line = (extremes.points_max[0][1] - extremes.a_max * extremes.points_max[0][0]) * facteur
+    b_min_line = (extremes.points_min[0][1] - extremes.a_min * extremes.points_min[0][0]) * facteur
 
-    unite_a = 'us/ohm' if rc else 's^-1/ohm'
-    unite_b = 'us' if rc else 's^-1'
-    texte = (f"a = {fit.a * facteur:.6g} {unite_a}\n"
-             f"a_min = {extremes.a_min * facteur:.6g} ; a_max = {extremes.a_max * facteur:.6g}\n"
-             f"Delta a = {extremes.da * facteur:.3g} {unite_a}\n"
-             f"b = {fit.b * facteur:.6g} {unite_b} ; Delta b = {extremes.db * facteur:.3g} {unite_b}\n"
-             f"R² = {fit.r2:.6f} ; {len(R)} points")
-    ax.text(0.03, 0.97, texte, transform=ax.transAxes, va="top", fontsize=8.2,
-            bbox=dict(boxstyle="round,pad=0.35", facecolor="white", alpha=0.80, edgecolor="0.75"))
-    ax.legend(loc="best", fontsize=7.4)
+    signe_bmax = "+" if b_max_line >= 0 else "-"
+    signe_bmin = "+" if b_min_line >= 0 else "-"
+
+    eq_max = f"$y_{{\min}}(R) = {extremes.a_max * facteur:.5g} R {signe_bmax} {abs(b_max_line):.4g}$"
+    eq_min = f"$y_{{\max}}(R) = {extremes.a_min * facteur:.5g} R {signe_bmin} {abs(b_min_line):.4g}$"
+
+    ax.plot(R_grille, (extremes.a_max * R_grille) * facteur + b_max_line,
+            linestyle="--", linewidth=1.4, color="seagreen",
+            label=eq_max)
+    ax.plot(R_grille, (extremes.a_min * R_grille) * facteur + b_min_line,
+            linestyle=":", linewidth=1.8, color="purple",
+            label=eq_min)
+
+    # Légende unique en bas à droite
+    ax.legend(loc="lower right", fontsize=7.5, framealpha=0.9)
+    
     enregistrer(fig, dossier, f"{prefixe}_regression", afficher, fichiers, mention)
+
+    unite_a_str = 'us/ohm' if rc else 's^-1/ohm'
+    unite_b_str = 'us' if rc else 's^-1'
+    texte_log = (f"a = {fit.a * facteur:.6g} {unite_a_str}\n"
+                 f"a_min = {extremes.a_min * facteur:.6g} ; a_max = {extremes.a_max * facteur:.6g}\n"
+                 f"Delta a = {extremes.da * facteur:.3g} {unite_a_str}\n"
+                 f"b = {fit.b * facteur:.6g} {unite_b_str} ; Delta b = {extremes.db * facteur:.3g} {unite_b_str}\n"
+                 f"R² = {fit.r2:.6f} ; {len(R)} points")
 
     resultat = {"n": len(R), "a_SI": fit.a, "b_SI": fit.b,
                 "a_min_SI": extremes.a_min, "a_max_SI": extremes.a_max,
@@ -404,7 +338,7 @@ def traiter_circuit(donnees: dict, circuit: str, dossier: Path, afficher: bool,
                 "R2": fit.r2 if np.isfinite(fit.r2) else None,
                 "residus_SI": fit.residus.tolist(),
                 "unite_a": "F" if rc else "H^-1", "unite_b": "s" if rc else "s^-1"}
-    journal.extend([f"\n{circuit} - {len(R)} mesures", texte,
+    journal.extend([f"\n{circuit} - {len(R)} mesures", texte_log,
                     "Incertitudes finales sur a et b : methode des droites extremes.",
                     f"Controle propagation additive : Delta a = {fit.da * facteur:.6g}, Delta b = {fit.db * facteur:.6g}."])
     estimation = None
@@ -430,7 +364,6 @@ def traiter_circuit(donnees: dict, circuit: str, dossier: Path, afficher: bool,
             avertir(f"{circuit} : l'incertitude par droites extremes atteint la valeur de la pente ; "
                     "les quotients sont mal determines.", journal)
 
-    # Calculs directs : toujours en SI, sans arrondis intermediaires.
     masque = R > 0
     Rpos, dRpos, tpos, dtpos = R[masque], dR[masque], tau[masque], dtau[masque]
     apparent = tpos / Rpos if rc else Rpos * tpos
@@ -485,10 +418,8 @@ def traiter_circuit(donnees: dict, circuit: str, dossier: Path, afficher: bool,
     return resultat
 
 
-# %% 4. ILLUSTRATIONS THEORIQUES : AUCUNE ACQUISITION RECONSTITUEE
-
+# %% 4. ILLUSTRATIONS THEORIQUES
 def signal_periodique(x: np.ndarray, forme: str) -> np.ndarray:
-    """Signal de periode 1, centre, d'amplitude 1. x = t/T."""
     phase = np.mod(x, 1.0)
     if forme == "creneau":
         return np.where(phase < 0.5, 1.0, -1.0)
@@ -500,17 +431,8 @@ def signal_periodique(x: np.ndarray, forme: str) -> np.ndarray:
 
 
 def reponse_periodique(forme: str, theta: float, periodes: int = 3, n: int = 4000):
-    """Resolution de theta*z' + z = e en regime periodique etabli.
-
-    Le signal est maintenu constant pendant chaque petit pas dx=1/n.
-    z[k+1] = q*z[k] + (1-q)*e[k], q=exp(-dx/theta).
-    Pour les signaux lisses, il s'agit d'une approximation d'echantillonnage.
-    L'etat initial periodique est calcule sans transitoire de demarrage.
-    RC : sortie = z. RL ideal : sortie = e-z.
-    """
     if not np.isfinite(theta) or theta <= 0 or n < 100 or periodes < 1:
         raise ValueError("theta > 0, n >= 100 et periodes >= 1 sont necessaires.")
-    # Au moins 100 echantillons par tau pour les constantes courtes.
     n = max(n, int(np.ceil(100 / theta)))
     if n > 200000:
         raise ValueError("tau/T trop petit pour cette illustration ; augmenter ce rapport.")
@@ -532,7 +454,6 @@ def reponse_periodique(forme: str, theta: float, periodes: int = 3, n: int = 400
 
 
 def tracer_theorie(dossier: Path, afficher: bool, fichiers: list[str]) -> None:
-    # Reponses a un echelon : temps normalise par tau, tensions par E.
     t = np.r_[np.linspace(-0.5, 0, 100, endpoint=False), np.linspace(0, 6, 1400)]
     e = (t >= 0).astype(float)
     for circuit in ("RC", "RL"):
@@ -551,7 +472,6 @@ def tracer_theorie(dossier: Path, afficher: bool, fichiers: list[str]) -> None:
         enregistrer(fig, dossier, f"{circuit.lower()}_echelon_theorique", afficher, fichiers,
                     "MODÈLE THÉORIQUE - pas une mesure")
 
-    # Deux axes explicites : l'attenuation n'est pas effacee par normalisation.
     for circuit, theta in (("RC", TAU_SUR_T_INTEGRATEUR), ("RL", TAU_SUR_T_DERIVATEUR)):
         rc = circuit == "RC"
         if (rc and theta < 5) or (not rc and theta > 0.05):
@@ -593,14 +513,8 @@ def tracer_theorie(dossier: Path, afficher: bool, fichiers: list[str]) -> None:
                         "MODÈLE - régime périodique ; échelles verticales distinctes")
 
 
-# %% 5. TRACES DE VOS ACQUISITIONS CSV (FORMAT EXPLICITE)
-
+# %% 5. ACQUISITIONS
 def lire_acquisition(config: dict):
-    """Lire les colonnes choisies ; virgule decimale acceptee avec ';'.
-
-    Pas de detection silencieuse du format constructeur : configurer les
-    lignes d'entete, le separateur, les colonnes et l'unite temporelle.
-    """
     fichier = Path(config["fichier"])
     if not fichier.is_absolute():
         fichier = RACINE / fichier
@@ -655,7 +569,6 @@ def tracer_acquisition(config: dict, dossier: Path, afficher: bool, fichiers: li
             raise ValueError("Pointage : tau > 0 et niveaux initial/final distincts et finis.")
         if not (t.min() <= t0 < t0 + tau <= t.max()):
             raise ValueError("Le pointage est hors de la plage temporelle de l'acquisition.")
-        # Meme formule pour une montee ou une descente, plateau reel compris.
         u_tau = uf + (ui - uf) * np.exp(-1)
         ax.axvline(t0 * 1e3, linestyle=":", linewidth=1)
         ax.axvline((t0 + tau) * 1e3, linestyle=":", linewidth=1)
@@ -674,7 +587,6 @@ def tracer_acquisition(config: dict, dossier: Path, afficher: bool, fichiers: li
 
 
 # %% 6. EXECUTION
-
 def main(exemple_2025: bool | None = None, afficher: bool | None = None,
          dossier_sortie: str | Path | None = None, theorie: bool | None = None) -> dict:
     exemple = EXEMPLE_2025 if exemple_2025 is None else exemple_2025
@@ -706,7 +618,6 @@ def main(exemple_2025: bool | None = None, afficher: bool | None = None,
             avertir(erreurs[-1], journal)
     if theorie:
         tracer_theorie(base / "theorie", afficher, fichiers)
-    # Les vraies acquisitions ne sont pas melangees au test des donnees 2025.
     if not exemple:
         for config in ACQUISITIONS:
             try:
